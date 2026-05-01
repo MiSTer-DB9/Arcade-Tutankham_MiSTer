@@ -1,0 +1,44 @@
+name: Sync + Release
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  repository_dispatch:
+    types: [sync_release]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false   # this is too slow, just skip
+        docker-images: true
+        swap-storage: true
+
+    - uses: actions/checkout@v6
+
+    - name: Cache Docker image
+      uses: actions/cache@v5
+      with:
+        path: /tmp/docker-image.tar
+        key: docker-theypsilon/quartus-lite-c5:17.0.docker0
+
+    - name: Sync with upstream + Release
+      run: ./.github/sync_release.sh theypsilon@gmail.com neurorulez@gmail.com timothy.redaelli@gmail.com
+      env:
+        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        # [MiSTer-DB9-Pro BEGIN] - key gate v1.5: MASTER_ROOT for SipHash MAC
+        # sync_release.sh materialises sys/db9_key_secret.vh from this env var
+        # before Quartus compile. 64 hex chars = 32 bytes. KEEP THIS SECRET.
+        MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
+        # [MiSTer-DB9-Pro END]
