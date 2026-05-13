@@ -10,6 +10,7 @@ source "${SCRIPT_DIR}/retry.sh"
 UPSTREAM_REPO="https://github.com/MiSTer-devel/Arcade-Tutankham_MiSTer.git"
 CORE_NAME=(Arcade-Tutankham)
 MAIN_BRANCH="main"
+UPSTREAM_BRANCH="main"
 COMPILATION_INPUT=(Arcade-Tutankham.qpf)
 COMPILATION_OUTPUT=(output_files/Arcade-Tutankham.rbf)
 QUARTUS_IMAGE="${QUARTUS_IMAGE:?QUARTUS_IMAGE env not set — populated by workflow Resolve-Quartus-image step}"
@@ -24,7 +25,7 @@ echo "Fetching upstream:"
 git remote remove upstream 2> /dev/null || true
 git remote add upstream "${UPSTREAM_REPO}"
 retry -- git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules upstream
-git checkout -qf "remotes/upstream/${MAIN_BRANCH}"
+git checkout -qf "remotes/upstream/${UPSTREAM_BRANCH}"
 
 NEW_RELEASE_FILE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${CORE_NAME[0]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
 COMMIT_TO_MERGE=$(git log -n 1 --pretty=format:%H -- "releases/${NEW_RELEASE_FILE}")
