@@ -45,6 +45,9 @@ module Tutankham
 	
 	//Screen centering (alters HSync, VSync and VBlank timing in the Konami 082 to reposition the video output)
 	input          [3:0] h_center, v_center,
+
+	//CRT Flip: rotates the rendered image 180 degrees at the VRAM read coordinates
+	input                flip_vertical,
 	
 	input         [24:0] ioctl_addr,
 	input          [7:0] ioctl_data,
@@ -117,6 +120,7 @@ Tutankham_CPU main_pcb
 	
 	.h_center(h_center),
 	.v_center(v_center),
+	.flip_vertical(flip_vertical),
 	
 	.controls_dip(controls_dip),
 	.dip_sw(dip_sw),

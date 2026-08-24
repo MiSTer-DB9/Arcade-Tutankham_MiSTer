@@ -47,6 +47,9 @@ module Tutankham_CPU
 	//Screen centering (alters HSync, VSync and VBlank timing in the Konami 082 to reposition the video output)
 	input   [3:0] h_center, v_center,
 
+	//CRT Flip: rotates the rendered image 180 degrees at the VRAM read coordinates
+	input         flip_vertical,
+
 	//ROM chip selects for main program ROMs (6x 4KB)
 	input         rom_m1_cs_i, rom_m2_cs_i, rom_m3_cs_i,
 	input         rom_m4_cs_i, rom_m5_cs_i, rom_m6_cs_i,
@@ -381,9 +384,12 @@ wire [7:0] palette_D = palette_regs[cpu_A[3:0]];  // CPU read-back path
 wire [7:0] videoram_D;
 wire [7:0] videoram_vout;
 // Apply flip and scroll to VRAM read coordinates (matching MAME screen_update)
-wire [7:0] eff_x = pix_x ^ {8{flip_x}};
+//CRT Flip XORs into the game's own flip registers, rotating the image 180 degrees
+wire flip_x_final = flip_x ^ flip_vertical;
+wire flip_y_final = flip_y ^ flip_vertical;
+wire [7:0] eff_x = pix_x ^ {8{flip_x_final}};
 wire [7:0] scroll_y = (eff_x < 8'd192) ? scroll_reg : 8'd0;
-wire [7:0] eff_y = (v_cnt[7:0] ^ {8{flip_y}}) + scroll_y;
+wire [7:0] eff_y = (v_cnt[7:0] ^ {8{flip_y_final}}) + scroll_y;
 wire [14:0] vram_rd_addr = {eff_y, eff_x[7:1]};
 
 dpram_dc #(.widthad_a(15)) videoram
@@ -524,8 +530,8 @@ k084 F3
 	.blank(~video_vsync),         //pin 5  - 082 pin 18 is /VSync, not a full blank
 	.aux_en(star_aux_en),         //pin 6
 	.stars_en(stars_enable),      //pin 7  - LS259 C3 Q4
-	.hff(flip_x),                 //pin 8  - LS259 C3 Q6
-	.h8q(~pix_x[3] ^ flip_x),     //pin 23 - LS86 F11 already applies the flip
+	.hff(flip_x_final),           //pin 8  - LS259 C3 Q6
+	.h8q(~pix_x[3] ^ flip_x_final), //pin 23 - LS86 F11 already applies the flip
 	.v1(v_cnt[0]),                //pin 22
 	.v2(v_cnt[1]),                //pin 21
 	.hpos_hi(pix_x[7:6]),         //Only used if the chip is built with SUPPRESS_C0
