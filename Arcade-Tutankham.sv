@@ -293,22 +293,25 @@ assign VIDEO_ARY = status[12] ? ((!ar) ? 12'd3 : 12'd0) : ((!ar) ? 12'd4 : 12'd0
 `include "build_id.v"
 localparam CONF_STR = {
 	"TUTANKHAM;;",
-	"ODE,Aspect Ratio,Original,Full screen,[ARC1],[ARC2];",
-	"OC,Orientation,Vert,Horz;",
-    "OB,Flip Vertical,Off,On;",
-	"OFH,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+	"P1,Video Options;",
+	"P1ODE,Aspect Ratio,Original,Full screen,[ARC1],[ARC2];",
+	"P1OC,Orientation,Vert,Horz;",
+	"P1OB,HDMI Flip,Off,On;",
+	"P1OM,CRT Flip,Off,On;",
+	"P1OFH,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+	"-;",
 	"OL,Game Speed,Native,60Hz Adjust;",
 	"-;",
 	"H1OR,Autosave Hiscores,Off,On;",
-	"P1,Pause Options;",
-	"P1OP,Pause when OSD is open,On,Off;",
-	"P1OQ,Dim video after 10s,On,Off;",
+	"P2,Pause Options;",
+	"P2OP,Pause when OSD is open,On,Off;",
+	"P2OQ,Dim video after 10s,On,Off;",
 	"-;",
 	"DIP;",
 	"-;",
-	"P2,Screen Centering;",
-	"P2O36,H Center,0,-1,-2,-3,-4,-5,-6,-7,+7,+6,+5,+4,+3,+2,+1;",
-	"P2O7A,V Center,0,-1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-11,-12;",
+	"P3,Screen Centering;",
+	"P3O36,H Center,0,-1,-2,-3,-4,-5,-6,-7,+7,+6,+5,+4,+3,+2,+1;",
+	"P3O7A,V Center,0,-1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-11,-12;",
 	"-;",
 	"R0,Reset;",
 	// [MiSTer-DB9-Pro BEGIN] - Saturn-first joy_type
@@ -344,6 +347,7 @@ wire [15:0] joystick_0_USB, joystick_1_USB;
 wire [15:0] joystick_0 = joydb_1ena ? (OSD_STATUS ? 16'b0 : joydb_1_mapped[10:0]) : joystick_0_USB;
 wire [15:0] joystick_1 = joydb_2ena ? (OSD_STATUS ? 16'b0 : joydb_2_mapped[10:0]) : joydb_1ena ? joystick_0_USB : joystick_1_USB;
 // [MiSTer-DB9-Pro END]
+wire [15:0] joystick_r_analog_0;   // right analog stick: [15:8]=Y signed, [7:0]=X signed
 wire [15:0] joy = joystick_0 | joystick_1;
 
 wire [21:0] gamma_bus;
@@ -386,6 +390,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	// [MiSTer-DB9-Pro BEGIN] - Saturn key gate
 	.saturn_unlocked(saturn_unlocked),
 	// [MiSTer-DB9-Pro END]
+	.joystick_r_analog_0(joystick_r_analog_0),
 	.ps2_key(ps2_key)
 );
 
@@ -510,9 +515,14 @@ wire m_down1    = btn_down    | joystick_0[2];
 wire m_left1    = btn_left    | joystick_0[1];
 wire m_right1   = btn_right   | joystick_0[0];
 
+//Right analog stick X decode - the cabinet's fire control was a 2-way (left/right) stick
+wire signed [7:0] rstick_x = joystick_r_analog_0[7:0];
+wire r_fire_left  = (rstick_x < -8'sd64);
+wire r_fire_right = (rstick_x >  8'sd64);
+
 //Player 1 — 2-way fire joystick (B=fire left, A=fire right)
-wire m_fire1_l  = btn_fire    | joystick_0[4];   // B button = fire left
-wire m_fire1_r  =               joystick_0[5];   // A button = fire right
+wire m_fire1_l  = btn_fire    | joystick_0[4] | r_fire_left;    // B button or stick left
+wire m_fire1_r  =               joystick_0[5] | r_fire_right;   // A button or stick right
 wire m_flash1   =               joystick_0[6];   // X button = flash bomb
 
 //Player 2 — 4-way movement (second controller D-pad)
@@ -625,6 +635,7 @@ Tutankham TUT_inst
 	
 	.h_center(status[6:3]),                                // Screen centering
 	.v_center(status[10:7]),
+	.flip_vertical(status[22]),                            // CRT Flip
 	
 	.video_hsync(hs),                                      // output video_hsync
 	.video_vsync(vs),                                      // output video_vsync
