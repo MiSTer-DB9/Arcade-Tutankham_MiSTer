@@ -3,7 +3,7 @@
 #
 # Refuses to build an un-ported fork's first BOT-setup push as a stock-
 # upstream RBF. Truth source: presence of joydb9saturn.v under any */sys/
-# within depth 4 (canonical per porting/STATUS.md, works for both hps_io.sv
+# within depth 4 (canonical per the fork status notes, works for both hps_io.sv
 # and pre-SV-rename hps_io.v cores; depth-limited find handles non-standard
 # layouts like Arcade-Cave's quartus/sys/). Fork-only repos with a sys/
 # tree but no DB9 port (and Main_DB9 with no sys/ tree at all) fall through
