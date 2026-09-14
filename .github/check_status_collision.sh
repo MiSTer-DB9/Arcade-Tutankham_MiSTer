@@ -26,6 +26,9 @@ set -euo pipefail
 
 mapfile -t SCAN_FILES < <(find . \
     -path ./.git -prune -o \
+    -path ./.gemini -prune -o \
+    -path ./.claude -prune -o \
+    -path ./.headroom -prune -o \
     -path ./releases -prune -o \
     -name 'joydb*.sv' -prune -o \
     -name 'joydb*.v'  -prune -o \

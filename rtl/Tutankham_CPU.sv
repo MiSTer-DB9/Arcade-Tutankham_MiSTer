@@ -47,9 +47,6 @@ module Tutankham_CPU
 	//Screen centering (alters HSync, VSync and VBlank timing in the Konami 082 to reposition the video output)
 	input   [3:0] h_center, v_center,
 
-	//CRT Flip: rotates the rendered image 180 degrees at the VRAM read coordinates
-	input         flip_vertical,
-
 	//ROM chip selects for main program ROMs (6x 4KB)
 	input         rom_m1_cs_i, rom_m2_cs_i, rom_m3_cs_i,
 	input         rom_m4_cs_i, rom_m5_cs_i, rom_m6_cs_i,
@@ -384,12 +381,9 @@ wire [7:0] palette_D = palette_regs[cpu_A[3:0]];  // CPU read-back path
 wire [7:0] videoram_D;
 wire [7:0] videoram_vout;
 // Apply flip and scroll to VRAM read coordinates (matching MAME screen_update)
-//CRT Flip XORs into the game's own flip registers, rotating the image 180 degrees
-wire flip_x_final = flip_x ^ flip_vertical;
-wire flip_y_final = flip_y ^ flip_vertical;
-wire [7:0] eff_x = pix_x ^ {8{flip_x_final}};
+wire [7:0] eff_x = pix_x ^ {8{flip_x}};
 wire [7:0] scroll_y = (eff_x < 8'd192) ? scroll_reg : 8'd0;
-wire [7:0] eff_y = (v_cnt[7:0] ^ {8{flip_y_final}}) + scroll_y;
+wire [7:0] eff_y = (v_cnt[7:0] ^ {8{flip_y}}) + scroll_y;
 wire [14:0] vram_rd_addr = {eff_y, eff_x[7:1]};
 
 dpram_dc #(.widthad_a(15)) videoram
@@ -502,62 +496,32 @@ k082 F5
 
 //--------------------------------------------------------- Starfield ----------------------------------------------------------//
 
-// Konami 084 custom chip - starfield generator and watchdog timer.
-// Replaces the Moon Cresta MC_STARS block that previously stood in here: that
-// circuit runs its LFSR once per pixel from a 12MHz/6MHz gate and takes its
-// colour from different shift-register taps, so it produced neither the star
-// density nor the palette of the Galaxian-family generator the 084 contains.
+// MC_STARS expects real clock signals, not narrow clock enables.
+// div[2] = ~6.144 MHz square wave (49.152/8), div[1] = ~12.288 MHz (49.152/4)
+// These have proper 50% duty cycle, matching Moon Cresta's 6/12 MHz clocks.
 
 wire [1:0] star_r, star_g, star_b;
-
-// Pin 6, Aux Enable, is the per-pixel video gate. The bootleg board that
-// replaced the 084 gates stars on framebuffer bit 1 being clear rather than on
-// the pixel being colour 0, so stars show through half the palette indices.
-wire star_aux_en = ~pixel_index[1];
-
-// Pin 20 is pulsed by a read of 0x8120.
-wire watchdog_kick = cs_watchdog & cpu_RnW;
-
-k084 F3
+MC_STARS stars_gen
 (
-	.clk(clk_49m),
-	.reset(reset),
-	.cen_6m(cen_6m),
-	.hblank(~h_cnt[8]),           //pin 3  - 082 pin 10 is /H256, so the star
-	                              //         window is the 256 counts where the
-	                              //         horizontal counter's bit 8 is set
-	.vblank(vblk),                //pin 4  - 082 pin 15
-	.blank(~video_vsync),         //pin 5  - 082 pin 18 is /VSync, not a full blank
-	.aux_en(star_aux_en),         //pin 6
-	.stars_en(stars_enable),      //pin 7  - LS259 C3 Q4
-	.hff(flip_x_final),           //pin 8  - LS259 C3 Q6
-	.h8q(~pix_x[3] ^ flip_x_final), //pin 23 - LS86 F11 already applies the flip
-	.v1(v_cnt[0]),                //pin 22
-	.v2(v_cnt[1]),                //pin 21
-	.hpos_hi(pix_x[7:6]),         //Only used if the chip is built with SUPPRESS_C0
-	.wd_kick(watchdog_kick),      //pin 20
-	.bootleg_mode(1'b0),          //0 = genuine 084, 1 = bootleg daughter-board tap
-
-	.star_r(star_r),              //pins 14/13
-	.star_g(star_g),              //pins 16/15
-	.star_b(star_b),              //pins 18/17
-	.star_on(),
-	.wd_reset()                   //pin 19 - deliberately unconnected, see note below
+	.I_CLK_12M(div[1]),
+	.I_CLK_6M(div[2]),
+	.I_H_FLIP(flip_x),
+	.I_V_SYNC(~video_vsync),
+//	.I_8HF(h_cnt[3] ^ flip_x),
+//	.I_256HnX(h256),
+	.I_8HF(pix_x[3] ^ flip_x),
+	.I_256HnX(1'b1),
+//  .I_256HnX(pix_x[7]),
+	.I_1VF(v_cnt[0] ^ flip_y),
+	.I_2V(v_cnt[1]),
+	.I_STARS_ON(stars_enable),
+	.I_STARS_OFFn(1'b1),
+	.I_PAUSEn(~pause),
+	.O_R(star_r),
+	.O_G(star_g),
+	.O_B(star_b),
+	.O_NOISE()
 );
-
-// The 084's watchdog output is modelled but not wired to the system reset. If
-// anything else in the core is subtly mistimed a live watchdog turns that into
-// a boot loop rather than a visible glitch, which is much harder to diagnose.
-// Connect wd_reset once the rest of the board is known good.
-//
-// Worth knowing: driving pin 3 from h_cnt[8] as the schematic does puts the
-// star window at h_cnt 256-511, while hblk below puts the visible window at
-// h_cnt 269-511 plus 128-140. Both are 256 counts, so the LFSR still advances
-// the correct 512 steps per line, but they are 13 counts out of phase - which
-// shows up as a starless band at one edge. On the real board the palette buffer
-// (LS240 A2) is enabled over the same h_cnt[8] window as the stars, so the two
-// cannot disagree there; the offset is in this core's hblk, not in the 084.
-// Fixing hblk shifts the whole picture, so it is left alone here.
 
 //----------------------------------------------------- Final video output -----------------------------------------------------//
 
@@ -587,31 +551,14 @@ wire [7:0] pal_byte = palette_regs[pixel_index];
 // Blank output during HBlank and VBlank to prevent ghost pixels
 wire active_video = ~hblk & ~vblk;
 
-wire [4:0] pal_r = {pal_byte[2:0], pal_byte[2:1]};
-wire [4:0] pal_g = {pal_byte[5:3], pal_byte[5:4]};
-wire [4:0] pal_b = {pal_byte[7:6], pal_byte[7:6], pal_byte[7]};
+wire pixel_is_bg = (pixel_index == 4'd0);
+wire show_stars = active_video & pixel_is_bg & stars_enable;
 
-// The 084's star resistors (150 ohm LSB, 100 ohm MSB) sum into the same node as
-// the palette DAC (1K/470/220 ohm). Against the ~130 ohm full-scale of the DAC
-// those three star levels land at 194, 214 and 255 of 255 - the same figures
-// galaxian.cpp derives - which is 24, 26 and 31 at 5 bits.
-function automatic [4:0] star_level(input [1:0] lvl);
-	case(lvl)
-		2'b00: star_level = 5'd0;
-		2'b01: star_level = 5'd24;
-		2'b10: star_level = 5'd26;
-		2'b11: star_level = 5'd31;
-	endcase
-endfunction
-
-// Stars add to whatever the palette is already producing, then saturate, which
-// is what the parallel resistors do on the real board.
-wire [5:0] mix_r = pal_r + star_level(star_r);
-wire [5:0] mix_g = pal_g + star_level(star_g);
-wire [5:0] mix_b = pal_b + star_level(star_b);
-
-assign red   = !active_video ? 5'd0 : mix_r[5] ? 5'd31 : mix_r[4:0];
-assign green = !active_video ? 5'd0 : mix_g[5] ? 5'd31 : mix_g[4:0];
-assign blue  = !active_video ? 5'd0 : mix_b[5] ? 5'd31 : mix_b[4:0];
+assign red   = show_stars  ? {star_r, star_r[1], 2'b00}                    :
+               active_video ? {pal_byte[2:0], pal_byte[2:1]}              : 5'd0;
+assign green = show_stars  ? {star_g, star_g[1], 2'b00}                    :
+               active_video ? {pal_byte[5:3], pal_byte[5:4]}              : 5'd0;
+assign blue  = show_stars  ? {star_b, star_b[1], 2'b00}                    :
+               active_video ? {pal_byte[7:6], pal_byte[7:6], pal_byte[7]} : 5'd0;
 
 endmodule
