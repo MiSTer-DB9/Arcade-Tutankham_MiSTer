@@ -2,7 +2,7 @@
 // hps_io.v
 //
 // Copyright (c) 2014 Till Harbaum <till@harbaum.org>
-// Copyright (c) 2017-2020 Alexey Melnikov
+// Copyright (c) 2017-2026 Alexey Melnikov
 //
 // This source file is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published
@@ -35,7 +35,7 @@
 module hps_io #(parameter CONF_STR, CONF_STR_BRAM=0, PS2DIV=0, WIDE=0, VDNUM=1, BLKSZ=2, PS2WE=0, STRLEN=$size(CONF_STR)>>3, F12KEYMOD=0)
 (
 	input             clk_sys,
-	inout      [48:0] HPS_BUS,
+	inout      [45:0] HPS_BUS,
 
 	// buttons up to 32
 	output reg [31:0] joystick_0,
@@ -52,17 +52,6 @@ module hps_io #(parameter CONF_STR, CONF_STR_BRAM=0, PS2DIV=0, WIDE=0, VDNUM=1, 
 	output reg [15:0] joystick_l_analog_3,
 	output reg [15:0] joystick_l_analog_4,
 	output reg [15:0] joystick_l_analog_5,
-	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
-	input      [15:0] joy_raw,
-	// [MiSTer-DB9 END]
-	// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream (UIO_DB9_MAP 0xFD)
-	output            db9_remap_cmd,
-	output      [5:0] db9_remap_byte_cnt,
-	output     [15:0] db9_remap_din,
-	// [MiSTer-DB9 END]
-	// [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (per-customer SipHash MAC; UIO_DB9_KEY 0xFE)
-	output            saturn_unlocked,
-	// [MiSTer-DB9-Pro END]
 
 	output reg [15:0] joystick_r_analog_0,
 	output reg [15:0] joystick_r_analog_1,
@@ -111,6 +100,17 @@ module hps_io #(parameter CONF_STR, CONF_STR_BRAM=0, PS2DIV=0, WIDE=0, VDNUM=1, 
 	// ps2 alternative interface.
 
 	// [8] - extended, [9] - pressed, [10] - toggles with every press/release
+	// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support
+	input      [15:0] joy_raw,
+	// [MiSTer-DB9 END]
+	// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream (UIO_DB9_MAP 0xFD)
+	output            db9_remap_cmd,
+	output      [5:0] db9_remap_byte_cnt,
+	output     [15:0] db9_remap_din,
+	// [MiSTer-DB9 END]
+	// [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (per-customer SipHash MAC; UIO_DB9_KEY 0xFE)
+	output            saturn_unlocked,
+	// [MiSTer-DB9-Pro END]
 	output reg [10:0] ps2_key = 0,
 
 	// [24] - toggles with every event
@@ -341,19 +341,10 @@ always@(posedge clk_sys) begin : uio_block
 				'h0X17,
 				'h0X18: begin sd_ack <= disk[VD:0]; sdn_ack <= io_din[11:8]; end
 				  'h29: io_dout <= {4'hA, stflg};
-`ifdef MISTER_DISABLE_ADAPTIVE
-				  'h2B: io_dout <= {HPS_BUS[48:46],4'b0110};
-`else
-				  'h2B: io_dout <= {HPS_BUS[48:46],4'b0111};
-`endif
-				  'h2F: io_dout <= 1;
 				  'h32: io_dout <= gamma_bus[21];
 				  'h36: begin io_dout <= info_n; info_n <= 0; end
-				  'h39: io_dout <= 1;
 				  'h3C: if(upload_req) begin io_dout <= {ioctl_upload_index, 8'd1}; upload_req <= 0; end				  
-				  'h43: io_dout <= F12KEYMOD;
-				  
-				  'h3E: io_dout <= 1; // shadow mask
+				  'h43: io_dout <= |F12KEYMOD;
 				'h003F: io_dout <= joystick_0_rumble;
 				'h013F: io_dout <= joystick_1_rumble;
 				'h023F: io_dout <= joystick_2_rumble;
@@ -649,14 +640,21 @@ always@(posedge clk_sys) begin : fio_block
 	reg [15:0] cmd;
 	reg  [2:0] cnt;
 	reg        has_cmd;
-	reg [26:0] addr;
 	reg        wr;
+	reg  [1:0] req_io;
+	reg        skip_add;
 
 	ioctl_rd <= 0;
 	ioctl_wr <= wr;
 	wr <= 0;
 
-	if(~fp_enable) has_cmd <= 0;
+	if(~fp_enable) begin
+		if(has_cmd && (cmd == FIO_FILE_TX)) begin
+			{ioctl_upload, ioctl_download} <= req_io;
+			{ioctl_rd, skip_add} <= req_io;
+		end
+		has_cmd <= 0;
+	end
 	else begin
 		if(io_strobe) begin
 
@@ -664,6 +662,7 @@ always@(posedge clk_sys) begin : fio_block
 				cmd <= io_din;
 				has_cmd <= 1;
 				cnt <= 0;
+				req_io <= 0;
 			end else begin
 
 				case(cmd)
@@ -685,44 +684,33 @@ always@(posedge clk_sys) begin : fio_block
 						begin
 							cnt <= cnt + 1'd1;
 							case(cnt)
-								0:	if(io_din[7:0] == 8'hAA) begin
+								0:	if(io_din[7:0]) begin
 										ioctl_addr <= 0;
-										ioctl_upload <= 1;
-										ioctl_rd <= 1;
-									end
-									else if(io_din[7:0]) begin
-										addr <= 0;
-										ioctl_download <= 1;
+										req_io <= (io_din[7:0] == 8'hAA) ? 2'b10 : 2'b01;
 									end
 									else begin
-										if(ioctl_download) ioctl_addr <= addr;
+										if(ioctl_download) ioctl_addr <= ioctl_addr + (WIDE ? 2'd2 : 2'd1);
 										ioctl_download <= 0;
 										ioctl_upload <= 0;
 									end
-
-								1: begin
-										ioctl_addr[15:0] <= io_din;
-										addr[15:0] <= io_din;
-									end
-
-								2: begin
-										ioctl_addr[26:16] <= io_din[10:0];
-										addr[26:16] <= io_din[10:0];
-									end
+								1: ioctl_addr[15:0]  <= io_din;
+								2: ioctl_addr[26:16] <= io_din[10:0];
 							endcase
 						end
 
 					FIO_FILE_TX_DAT:
-						if(ioctl_download) begin
-							ioctl_addr <= addr;
-							ioctl_dout <= io_din[DW:0];
-							wr   <= 1;
-							addr <= addr + (WIDE ? 2'd2 : 2'd1);
-						end
-						else begin
-							ioctl_addr <= ioctl_addr + (WIDE ? 2'd2 : 2'd1);
-							fp_dout <= ioctl_din;
-							ioctl_rd <= 1;
+						begin
+							if(!skip_add) ioctl_addr <= ioctl_addr + (WIDE ? 2'd2 : 2'd1);
+							skip_add <= 0;
+							
+							if(ioctl_download) begin
+								ioctl_dout <= io_din[DW:0];
+								wr <= 1;
+							end
+							else begin
+								fp_dout <= ioctl_din;
+								ioctl_rd <= 1;
+							end
 						end
 				endcase
 			end
@@ -730,6 +718,12 @@ always@(posedge clk_sys) begin : fio_block
 	end
 end
 
+
+// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream drivers
+assign db9_remap_cmd      = (uio_block.cmd == 16'hFD);
+assign db9_remap_byte_cnt = byte_cnt[5:0];
+assign db9_remap_din      = io_din;
+// [MiSTer-DB9 END]
 
 // [MiSTer-DB9-Pro BEGIN] - key gate v1.5 (40-byte UIO_DB9_KEY 0xFE bytestream)
 `include "db9_key_secret.vh"
@@ -747,12 +741,6 @@ db9_key_gate #(
 );
 // [MiSTer-DB9-Pro END]
 
-
-// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream drivers
-assign db9_remap_cmd      = (uio_block.cmd == 16'hFD);
-assign db9_remap_byte_cnt = byte_cnt[5:0];
-assign db9_remap_din      = io_din;
-// [MiSTer-DB9 END]
 endmodule
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -940,6 +928,8 @@ always @(posedge clk_sys) begin
 	  16: dout <= vid_pixrep;
 	  17: dout <= vid_de_h;
 	  18: dout <= vid_de_v;
+	  19: dout <= vid_fclks[15:0];
+	  20: dout <= {8'd0, vid_fclks[23:16]};
 	  default dout <= 0;
 	endcase
 end
@@ -953,6 +943,10 @@ reg  [7:0] vid_pixrep;
 reg [15:0] vid_de_h;
 reg  [7:0] vid_de_v;
 
+// Exact clk_vid edges in one complete frame.
+// Count once after startup or a timing change, then hold the result.
+reg [23:0] vid_fclks = 0;
+
 always @(posedge clk_vid) begin
 	integer hcnt;
 	integer vcnt;
@@ -964,6 +958,7 @@ always @(posedge clk_vid) begin
 	reg [3:0] resto = 0;
 	reg calch = 0;
 
+	if(resto == 1) vid_fclks <= vid_fclks + 1'd1;
 	if(calch & de) ccnt <= ccnt + 1;
 	pcnt <= pcnt + 1'd1;
 
@@ -991,12 +986,16 @@ always @(posedge clk_vid) begin
 		if(old_vs & ~vs) begin
 			vid_int <= {vid_int[0],f1};
 			if(~f1) begin
+				// !f1 selects the same boundary once per complete frame.
 				if(hcnt && vcnt) begin
 					old_vmode <= new_vmode;
 
 					//report new resolution after timeout
 					if(resto) resto <= resto + 1'd1;
-					if(vid_hcnt != hcnt || vid_vcnt != vcnt || old_vmode != new_vmode) resto <= 1;
+					if(vid_hcnt != hcnt || vid_vcnt != vcnt || old_vmode != new_vmode) begin
+						resto <= 1;
+						vid_fclks <= 0;
+					end
 					if(&resto) vid_nres <= vid_nres + 1'd1;
 					vid_hcnt <= hcnt;
 					vid_vcnt <= vcnt;
